@@ -29,11 +29,4 @@ Stealth scan is easily detected by modern ids and ips so implementation of it co
 
 ## Installation
 
-`git clone --no-checkout --sparse --filter=blob:none https://github.com/Lukidere/security-toolkit.git
-cd security-toolkit
-git sparse-checkout set tcp-scanner
-git checkout
-cd tcp-scanner
-chmod +x install.sh
-./install.sh
-`
+`git clone --no-checkout --sparse --filter=blob:none https://github.com/Lukidere/security-toolkit.git && cd security-toolkit && git sparse-checkout set tcp-scanner && git checkout && cd tcp-scanner && chmod +x install.sh && ./install.sh`

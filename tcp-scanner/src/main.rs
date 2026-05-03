@@ -127,3 +127,18 @@ fn ports_in_range(s:&str) -> Result<Vec<u16>,String> {
         Ok(vec![port])
     }
 }
+
+#[cfg(test)]
+mod tests
+    {
+        use super::*;
+        #[test]
+        fn parse_ports() {
+            let input: Vec<&str> = vec!["1-3","4,5,6","7-8","10-15"];
+            let input:Vec<String> = input.into_iter().map(|item| item.to_owned()).collect();
+            let output = get_all_ports(input);
+            assert_eq!(Vec::from([1,2,3,4,5,6,7,8,10,11,12,13,14,15]),output)
+            
+
+        }
+    }

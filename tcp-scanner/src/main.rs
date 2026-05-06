@@ -1,12 +1,13 @@
 
 
 mod scanning;
-use std::sync::Arc;
+use std::{net::{IpAddr, SocketAddr}, sync::Arc};
 use scanning::*;
 use clap::{Parser,};
 use tokio::{sync::{Semaphore, mpsc}, task::JoinSet};
 use owo_colors::{colors::*,OwoColorize};
 use tracing::{event,Level};
+use indicatif::{ProgressBar,ProgressStyle};
 #[derive(Parser)]
 #[command(version="1",about="TCP Scanner",long_about = "Scans ports and grabs banner if it exists")]
 struct Cli {
@@ -27,12 +28,20 @@ async fn main() {
     if cli.debug {
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
+        .with_writer(std::io::stderr)
         .init();
     }
-
+    
     match cli.ports {
         Some(ports) => { 
-            let result = scan_ports(ports, cli.ip).await;
+            let ip_addr= match parse_or_resolve(&cli.ip).await {
+                Ok(val) => val,
+                Err(_) => {
+                    eprintln!("DNS lookup failed: {}",cli.ip);
+                    return;
+                }
+            };
+            let result = scan_ports(ports,ip_addr).await;
             if cli.json {
                 let json_resp = serde_json::to_string(&result).unwrap();
                 println!("{json_resp}");
@@ -49,13 +58,17 @@ async fn main() {
 
 
 }
-pub async fn scan_ports(ports:Vec<String>,addr:String) -> Vec<PortResponse> {
+pub async fn scan_ports(ports:Vec<String>,addr:IpAddr) ->  Vec<PortResponse> {
     event!(Level::DEBUG,"Starting port scan");
+    let pb = ProgressBar::new(ports.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+    .template("{spinner:.green} [{elapsed}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+    .unwrap());
     let (tx,mut rx) = mpsc::channel::<(u16,PortResponse)>(256);
     let ports = get_all_ports(ports);
     let mut set = JoinSet::<()>::new();
     let semaphore = Arc::new(Semaphore::new(256));
-    println!("Scanning ports for ip: {}",addr.fg::<Green>().bold());
+    eprintln!("Scanning ports for ip: {}",addr.fg::<Green>().bold());
     let collector = tokio::spawn(async move {
         let mut v: Vec<PortResponse> = Vec::new();
         while let Some((_port,resp)) = rx.recv().await {
@@ -68,15 +81,17 @@ pub async fn scan_ports(ports:Vec<String>,addr:String) -> Vec<PortResponse> {
         event!(Level::DEBUG,"scanning port: {}",port);
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let tx2 = tx.clone();
+        let pb2 = pb.clone();
         set.spawn(async move {
-            match tx2.send((port,scan_port(port,&ip).await)).await {
+
+            match tx2.send((port,scan_port(port,ip).await)).await {
                 Ok(_) => (),
                 Err(_) => tx2.closed().await
             }
-
-                   
+            pb2.inc(1);
             drop(permit);
         });
+
     }
     drop(tx);
     while let Some(res) = set.join_next().await {

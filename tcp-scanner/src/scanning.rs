@@ -4,18 +4,18 @@ use tokio_rustls::{TlsConnector,  rustls::{ClientConfig, RootCertStore}};
 use owo_colors::{OwoColorize,colors::*};
 use ping_async::IcmpEchoStatus;
 use socket2::SockRef;
-use tokio::{io::{AsyncWriteExt,AsyncReadExt}, net::TcpStream, time::timeout};
-use std::{net::IpAddr, sync::Arc};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{self, TcpStream, lookup_host}, time::timeout};
+use std::{net::{IpAddr, SocketAddr}, str::FromStr, sync::Arc};
 use serde::Serialize;
 use tracing::*;
 use std::{fmt,io::ErrorKind, time::Duration};
 #[derive(Debug,PartialEq,Serialize)]
 pub enum ConnectResponse {
     OK,
-    TIMEOUT,
-    REJECTED,
-    OTHER,
-    CLOSED
+    Closed,
+    Filtered,
+    Unreachable,
+   Unknown, 
 }
 pub enum ServiceType {
     HTTP,
@@ -40,8 +40,8 @@ impl ServiceType {
         }
     }
     
-    async fn fetch_banner(&self,mut conn:TcpStream,ip:&str) -> Option<String> {
-        let mut buf: [u8;100000] = [0;100000];
+    async fn fetch_banner(&self,mut conn:TcpStream,ip:SocketAddr) -> Option<String> {
+        let mut buf: [u8;1024] = [0;1024];
         match &self {
             ServiceType::HTTP => {
                 let request = b"GET / HTTP/1.0\r\nHost:rust-scanner.com\r\n\r\n";
@@ -67,20 +67,25 @@ let config = ClientConfig::builder()
         .with_root_certificates(root_cert_store)
         .with_no_client_auth();
 let connector = TlsConnector::from(Arc::new(config));
-        let ip_addr: IpAddr = ip.parse().unwrap();
-        let servername = ServerName::from(ip_addr);
-        let mut tls_stream = connector.connect(servername, conn).await.unwrap();
+        
+        let servername = ServerName::from(ip.ip());
+        let mut tls_stream = connector.connect(servername, conn).await.ok()?;
         let request = b"GET / HTTP/1.0\r\nHost:rust-scanner.com";
-        tls_stream.write_all(request).await.unwrap();
-
-        let mut buf: [u8;1024] = [0;1024];
-        let size = tls_stream.read(&mut buf).await.unwrap();
-        Some(String::from_utf8_lossy(&buf[..size]).to_string())
+        let size = match timeout(Duration::from_secs(5), tls_stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => n,
+        _ => return None,
+    };
+    Some(String::from_utf8_lossy(&buf[..size]).to_string())
             }
             _ => {
-                let size = conn.read(&mut buf).await.unwrap();
-                Some(analyze_http_banner(String::from_utf8_lossy(&buf[..size]).to_string().as_str()))
+                match timeout(Duration::from_secs(3), conn.read(&mut buf)).await {
+                    Ok(Ok(size)) if size>0 => {
+                        Some(analyze_http_banner(&String::from_utf8_lossy(&buf[..size])))
+                    },
+                    _ => None
 
+
+            }
             }
 
         }
@@ -118,18 +123,18 @@ impl fmt::Display for PortResponse {
     }
 
 }
-pub async fn scan_port(port:u16,ip:&str) -> PortResponse {
+pub async fn scan_port(port:u16,ip:IpAddr) -> PortResponse {
     let timeout_duration = Duration::from_secs(2);
-    let address = format!("{ip}:{port}");
-    let connect_future = TcpStream::connect(address);
     let resp:PortResponse;
+    let socket= SocketAddr::new(ip,port);
+    let connect_future = TcpStream::connect(socket.clone());
     resp = match timeout(timeout_duration, connect_future).await {
         Ok(Ok(conn)) => {
 
             let sock = SockRef::from(&conn);
             sock.set_linger(Some(Duration::from_secs(0))).unwrap();
             if let Some(srv) = ServiceType::from_port(port) {
-                match ServiceType::fetch_banner(&srv, conn, ip).await {
+                match ServiceType::fetch_banner(&srv, conn, socket).await {
                     Some(str) => PortResponse {banner:Some(str),port,response: ConnectResponse::OK},
                     None => PortResponse {banner:None,port,response: ConnectResponse::OK}
 
@@ -150,16 +155,16 @@ pub async fn scan_port(port:u16,ip:&str) -> PortResponse {
         
         Ok(Err(e)) => {
             match e.kind() {
-                ErrorKind::ConnectionRefused  => PortResponse::new(ConnectResponse::REJECTED,port),
-                ErrorKind::HostUnreachable => PortResponse::new(ConnectResponse::CLOSED,port),
-                _=> PortResponse::new(ConnectResponse::OTHER,port),
+                ErrorKind::ConnectionRefused  => PortResponse::new(ConnectResponse::Closed,port),
+                ErrorKind::HostUnreachable => PortResponse::new(ConnectResponse::Unreachable,port),
+                _=> PortResponse::new(ConnectResponse::Unknown,port),
                 
 
             }
 
         }
         Err(_) => {
-             PortResponse::new(ConnectResponse::TIMEOUT,port)
+             PortResponse::new(ConnectResponse::Filtered,port)
         }
         };
         resp
@@ -169,15 +174,25 @@ pub async fn scan_port(port:u16,ip:&str) -> PortResponse {
 
 pub async fn ping_host(addr:String) {
     event!(Level::DEBUG,"Starting ICMP Scan");
-    let target = addr.parse::<IpAddr>().unwrap();
-    let pinger = ping_async::IcmpEchoRequestor::new(target,None,None,Some(Duration::from_secs(3))).unwrap();
+    let query = if addr.contains(':') { addr.clone() } else { format!("{addr}:0") };
+    let target = match lookup_host(query).await {
+        Ok(mut val) => match val.next(){
+            Some(val) => val,
+            None => { println!("Failed to lookup host, make sure that host exists") ;
+                return; }
+        },
+        Err(_) => {println!("Failed to lookup host, make sure that host exists");
+            return; }
+    };
+
+    let pinger = ping_async::IcmpEchoRequestor::new(target.ip(),None,None,Some(Duration::from_secs(3))).unwrap();
     let reply = pinger.send().await;
     match reply {
         Ok(val) => match val.status() {
-            IcmpEchoStatus::Success => println!("Host: {} is {}",addr.blue().italic(),"up".green().bold()),
-            _ => println!("Host: {} is {}",addr.blue().italic(),"down".red().bold())
+            IcmpEchoStatus::Success => println!("Host: {} is {}",target.ip().blue().italic(),"up".green().bold()),
+            _ => println!("Host: {} is {}",target.ip().blue().italic(),"down".red().bold())
         }
-        Err(e) => println!("Couldnt connect to host:{}, reason:{}",addr.blue().italic(),e.fg::<Red>().bold())
+        Err(e) => println!("Couldnt connect to host:{}, reason:{}",target.ip().blue().italic(),e.fg::<Red>().bold())
     }
 
 }
@@ -206,4 +221,17 @@ pub fn analyze_http_banner(banner:&str) -> String {
     }
 
     "Unknown HTTP Service".to_string()
+}
+
+pub async fn parse_or_resolve(input:&str) -> Result<IpAddr,String> {
+    if let Ok(ip) = input.parse::<IpAddr>() {
+        return Ok(ip)
+    }
+    lookup_host(input)
+        .await
+        .map_err(|e| format!("DNS lookup failed: {e}"))?
+        .next()
+        .map(|sa| sa.ip())
+        .ok_or_else(|| format!("No addresses for {input}"))
+    
 }

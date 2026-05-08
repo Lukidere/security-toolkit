@@ -13,10 +13,22 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        project: [http-smuggler,tcp-scanner]
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: ${{ matrix.project }}
+    
     - name: Build
       run: cargo build --verbose
+      working-directory: ${{matrix.project}}
     - name: Run tests
       run: cargo test --verbose
+      working-directory: ${{matrix.project}}

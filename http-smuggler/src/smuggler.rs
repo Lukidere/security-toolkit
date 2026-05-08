@@ -1,8 +1,8 @@
 use dns_lookup::lookup_host;
 use owo_colors::{OwoColorize, colors::*};
-use std::io::{self, stdin};
+use std::io::stdin;
 use std::path::PathBuf;
-use std::{error::Error, fs, net::IpAddr, path};
+use std::{error::Error, fs, net::IpAddr};
 
 pub enum InputType {
     File,
@@ -13,7 +13,7 @@ impl InputType {
     fn get_input(&self) -> Option<String> {
         match self {
             InputType::File => {
-                let mut path: String;
+                let mut path: String = String::new();
                 println!("Please provide path to the file");
 
                 stdin().read_line(&mut path).expect(&format!(
@@ -31,9 +31,8 @@ impl InputType {
                 smuggled_request
             }
             InputType::Stdio => {
-                let mut satisfactory = 0;
                 let mut smuggled_request: String = String::new();
-                while satisfactory == 0 {
+                while true {
                     println!("Please input your desired request:");
                     std::io::stdin()
                         .read_line(&mut smuggled_request)
@@ -41,6 +40,10 @@ impl InputType {
 
                     println!("Is the request correct : {:#?} [Y/N]", smuggled_request);
                     let mut choice: String = String::new();
+                    stdin().read_line(&mut choice).expect(&format!(
+                        "Failed to read line {} from user",
+                        "choice".fg::<Green>().bold()
+                    ));
                     match choice.trim().to_lowercase().as_str() {
                         "y" => break,
                         _ => {
@@ -100,10 +103,9 @@ pub fn check_host(ip_addr: &str) -> Result<IpAddr, Box<dyn Error>> {
     Ok(ip)
 }
 
-pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> String {
+pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> Option<String> {
     let mut path = String::new();
     let mut host = String::new();
-    let mut smuggled = String::new();
     println!(
         "Please input path to send the request to (example: {})",
         "/path/to/vuln".fg::<Red>().bold()
@@ -116,8 +118,19 @@ pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> Stri
         "Please input hostname to which you want to send the request to (example: {})",
         "vulnerable-site.com".fg::<Blue>().underline()
     );
-    stdin().read_line(&mut path).expect(&format!(
+    stdin().read_line(&mut host).expect(&format!(
         "Failed to read line {} from user",
         "host".fg::<Green>().bold()
     ));
+    if let Some(smuggled_request) = InputType::get_input(&input_type) {
+        Some(SmuggleType::build_request(
+            &smuggle_type,
+            &path,
+            &host,
+            &smuggled_request,
+        ))
+    } else {
+        eprintln!("Failed to create request please try again!");
+        return None;
+    }
 }

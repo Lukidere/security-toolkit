@@ -81,7 +81,7 @@ impl SmuggleType {
             SmuggleType::TECL => {
                 let body = format!("{}\r\n", smuggled_request);
                 let body_size = body.len();
-                // Uwaga: Zostawiam Twoją logikę obliczania długości
+            
                 let content_length = format!("{:x}\r\n", body_size).len();
 
                 format!(

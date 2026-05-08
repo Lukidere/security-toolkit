@@ -3,19 +3,14 @@ mod smuggler;
 use std::fs::File;
 use owo_colors::{OwoColorize,colors::*};
 
-use crate::smuggler::check_host;
+use crate::smuggler::{check_host, SmuggleType,InputType};
 #[derive(Clone)]
-enum SmuggleType {
-    CLTE,
-    TECL
-
-}
 #[derive(Parser)]
 #[command(version="1",about="HTTP smuggling utility",long_about)]
 struct Cli {
     ip: String,
     #[arg(short,long,value_parser=ParseSmuggleType)]
-    mode: String,
+    mode: SmuggleType,
     #[arg(short,long,conflicts_with="file")]
     request: String,
     #[arg(short,long)]
@@ -28,7 +23,7 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     if let Ok(addr) = check_host(&cli.ip) {
-        
+        println!("{:#?},",create_clte_request("/test/path".to_owned(), "vuln_host".to_owned(), "3".to_owned(),"GET /login/admin".to_owned()));
     }
 }
 
@@ -36,9 +31,9 @@ fn main() {
 
 fn ParseSmuggleType(s:&str) -> Result<SmuggleType,String> {
     match s.to_lowercase().as_str() {
-        "cl.te" => Ok(SmuggleType::CLTE),
-        "te.cl" => Ok(SmuggleType::TECL),
-        _ => Err(format!("Possible options are:\n{}\n{}","cl.te".fg::<Green>().bold(),"te.cl".fg::<Blue>().bold()))
+        "clte" => Ok(SmuggleType::CLTE),
+        "tecl" => Ok(SmuggleType::TECL),
+        _ => Err(format!("Possible options are:\n{}\n{}","clte".fg::<Green>().bold(),"tecl".fg::<Blue>().bold()))
     }
 
 }

